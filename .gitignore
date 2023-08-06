@@ -1,0 +1,37 @@
+# MicroPython project files to ignore
+
+# Compiled Python files
+*.pyc
+*.pyo
+
+# MicroPython compiled bytecode
+__pycache__/
+
+# MicroPython system files
+.mpy/
+mpy_cross/
+
+# Virtual environment
+venv/
+
+# Editor/IDE specific files and directories
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# Compiled MicroPython files
+*.mpy
+
+# Compiled MicroPython bytecode
+*.mpy-cross
+
+# Temporary files
+*.swp
+*~
+
+# Log files
+*.log
+
+# Ignore data files (modify as needed)
+data/
