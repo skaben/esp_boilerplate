@@ -1,70 +1,101 @@
 # contains basic routines
 
-import time
 import webrepl
+import network
 import uasyncio as asyncio
 import urandom
-
-from utime import ticks_diff, ticks_ms
 
 from config import netcfg
 from device import device_instance
 
+from lib.umqttsimple import MQTTClient, MQTTException
+
 # network routines
 
 
-async def wifi_init(station):
+async def wifi_init():
+    station = network.WLAN(network.STA_IF)
     station.active(True)
-    station.config(dhcp_hostname=netcfg.hostname)
+    # station.config(dhcp_hostname=netcfg.hostname)
     station.connect(netcfg.wlan_ssid, netcfg.wlan_password)
     while not station.isconnected():
-        show_no_wifi()
-        asyncio.sleep_ms(100)
+        await show_no_wifi()
     print('Connection successful')
     print(station.ifconfig())
-    webrepl.start()
+    if netcfg.webrepl_enabled:
+        webrepl.start()
 
 
-async def heartbeat(station, client):
-    while True:
-        if not station.isconnected():
-            await wifi_init(station)
-        if ticks_diff(ticks_ms(), client.last_ping) > netcfg.keepalive * 1000:
-            netcfg.mqtt_conn = False
-        asyncio.sleep_ms(1000)
+async def mqtt_init(callback):
+    station = network.WLAN(network.STA_IF)
+    if not station.isconnected():
+        await wifi_init()
+    
+    _ip = str(station.ifconfig()[0]).split('.')
+    broker_ip = '.'.join(_ip[:3] + ['4'])
+    cfg = netcfg.mqtt
+
+    netcfg.mqtt_conn = False
+
+    client = MQTTClient(
+        netcfg.mqtt.get('client_id'),
+        broker_ip,
+        port=cfg['port'],
+        user=cfg['user'],
+        password=cfg['password'],
+        keepalive=netcfg.keepalive
+    )
+    client.set_callback(callback)  # awful
+    netcfg.client = client
+
+    while not netcfg.mqtt_conn:
+        client.connect()
+        await show_no_broker()
+        try:
+            subscribe_to = netcfg.sub_topics
+            for topic in subscribe_to:
+                client.subscribe(topic)
+            cmd_out = '{"timestamp":1}'
+            client.publish(netcfg.topics['pub'], cmd_out)
+            netcfg.mqtt_conn = True
+        except MQTTException:
+            pass
+
+    print(f'connected to {broker_ip}, subscribed to {subscribe_to}')
+    await show_broker_connect()
 
 
-def send_pong(msg, client):
-    if netcfg.msg != b'':
-        client.publish(netcfg.topics['pub_id_pong'], msg)
-        netcfg.msg = b''
+async def send_pong():
+    if netcfg.ping_msg != b'':
+        netcfg.client.publish(netcfg.topics['pub_id_pong'], netcfg.ping_msg)
+        netcfg.ping_msg = b''
 
 
 # device routines
 
 
-def blink_led(led, count, interval=0.25):
+async def blink_led(led, count, interval=250):
     for x in range(count):
-        led.duty(1023)
-        time.sleep(interval)
-        led.duty(0)
-        time.sleep(interval)
+        led.on()
+        await asyncio.sleep_ms(interval)
+        led.off()
+        await asyncio.sleep_ms(interval)
 
 
-def show_no_wifi():
-    blink_led(device_instance.pins['red'], 6, 0.5)
+async def show_no_wifi():
+    await blink_led(device_instance.pins['red'], 6, 500)
 
 
-def show_no_broker(led):
-    blink_led(device_instance.pins['blue'], 6)
+async def show_no_broker():
+    await blink_led(device_instance.pins['blue'], 6)
 
 
-def show_wifi_connect(pwm):
-    blink_led(device_instance.pins['green'], 6)
+async def show_wifi_connect():
+    await blink_led(device_instance.pins['green'], 6)
 
 
-def show_broker_connect(pwm):
-    blink_led(device_instance.pins['green'], 3)
+async def show_broker_connect():
+    await blink_led(device_instance.pins['green'], 3)
 
 
 # helpers
@@ -77,7 +108,7 @@ def randint(_min, _max):
     return val
 
 
-def _hex(slice):
+def to_hex(slice):
     return int(int(slice, 16) * 4)
 
 

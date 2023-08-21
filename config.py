@@ -17,8 +17,8 @@ class NetworkConfig:
 
     hostname = f'Boiler-{CLIENT_ID}'.encode()
 
-    wlan_ssid = 'ArmyDep'
-    wlan_password = 'z0BcfpHu'
+    wlan_ssid = 'Qeti'
+    wlan_password = 'jiqia123'
 
     keepalive = 30
 
@@ -26,6 +26,7 @@ class NetworkConfig:
         'port': 1883,
         'user': b'mqtt',
         'password': b'skabent0mqtt',
+        'client_id': hostname,
         'last_message': 0,
         'message_interval': 5,
         'counter': 0,
@@ -41,6 +42,8 @@ class NetworkConfig:
 
     ping_msg = b''
     mqtt_conn = False
+    client = None
+    webrepl_enabled = False
 
     @property
     def sub_topics(self):

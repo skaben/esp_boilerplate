@@ -1,11 +1,8 @@
 import machine
-import utime as time
 import uasyncio as asyncio
 
 
 class Device:
-
-    running = False
 
     pins = {
         'red': machine.Pin(14, machine.Pin.OUT),
@@ -94,7 +91,7 @@ class Device:
         except Exception:  # noqa
             print(f'cannot set PWM, check config:\n{self._pwm}')
     
-    def manage_rgb(self, payload, chan_name):
+    def manage_rgb(payload, chan_name):
         if len(payload) < 4 or (len(payload)-1)%3 != 0:
             return
         commands = set(payload) & set(self.sequence[chan_name]['current_command'])
@@ -121,7 +118,7 @@ class Device:
         self.sequence[chan_name]['quant']['flag'] = 0
         self.manage_pwm(0)
 
-    def manage_discr(self, payload, chan_name):
+    def manage_discr(payload, chan_name):
         if len(payload) < 3 or (len(payload)-1)%2 != 0:
             return
         commands = set(payload) & set(self.sequence[chan_name]['current_command'])
@@ -144,7 +141,7 @@ class Device:
         self.sequence[chan_name]['time_slice'] = time_phase(str(self.sequence[chan_name]['time_static'][0]))
 
 
-    def exec_discr(self, chan_name):
+    def exec_discr(chan_name):
         if (time.ticks_ms() - self.sequence[chan_name]['time_current']) >= self.sequence[chan_name]['time_slice']:
             if self.sequence[chan_name]['mode'] == 'C':
                 self.sequence[chan_name]['count'] = (self.sequence[chan_name]['count'] + 1) % self.sequence[chan_name]['len']
@@ -158,7 +155,7 @@ class Device:
             self.pins[chan_name].value(int(self.sequence[chan_name]['onoff'][self.sequence[chan_name]['count']]))
             self.sequence[chan_name]['time_current'] = time.ticks_ms()
     
-    def manage_pwm_delta(self, prev_idx):
+    def manage_pwm_delta(prev_idx):
         rgb_seq = self.sequence['RGB']
         quant = rgb_seq['quant']
 
@@ -183,50 +180,48 @@ class Device:
             rgb_seq[key] += rgb_seq['delta'][key]
         self.init_pwm()
 
-    def manage_pwm(self, idx):
+    def manage_pwm(idx):
         _color = self.sequence['RGB']['color']
         self.sequence['RGB']['red'] = utils.to_hex(_color[idx][:2])
         self.sequence['RGB']['green'] = utils.to_hex(_color[idx][2:4])
         self.sequence['RGB']['blue'] = utils.to_hex(_color[idx][4:6])
         self.init_pwm()
     
-    async def run(self):
-        self.running = True
-        while self.running:
-            if self.sequence['RGB'].get('len') > 0:
-                if (time.ticks_ms() - self.sequence['RGB']['time_current']) >= self.sequence['RGB']['time_slice']:
-                    before = self.sequence['RGB']['count']
-                    self.sequence['RGB']['time_current'] = time.ticks_ms()
-                    if self.sequence['RGB']['quant']['flag'] == 0:
-                        if self.sequence['RGB']['mode'] == 'C':
-                            self.sequence['RGB']['count'] = (before + 1) % self.sequence['RGB']['len']
-                        elif self.sequence['RGB']['mode'] == 'S':
-                            self.sequence['RGB']['count'] += 1
-                            if self.sequence['RGB']['count'] >= self.sequence['RGB']['len']:
-                                self.sequence['RGB']['len'] = 0
-                                continue
-                        try:
-                            tc = int(self.sequence['RGB'].get('time_change')[before])
-                            if tc > 0:
-                                self.sequence['RGB']['time_slice'] = int(tc/self.sequence['RGB']['quant']['num'])
-                                self.manage_pwm_delta(before)
-                            else:
-                                self.sequence['RGB']['time_slice'] = time_phase(self.sequence['RGB']['time_static'][self.sequence['RGB']['count']])
-                                self.manage_pwm(self.sequence['RGB']['count'])
-                        except IndexError:
-                            print('index error in RGB conf')
-                    elif self.sequence['RGB']['quant']['flag'] == 1:
-                        self.manage_pwm_delta(before)
-                        if self.sequence['RGB']['quant']['count'] >= self.sequence['RGB']['quant']['num']:
-                            self.sequence['RGB']['quant']['count'] = 0
-                            self.sequence['RGB']['quant']['flag'] = 0
-                            self.sequence['RGB']['time_slice'] = time_phase(self.sequence['RGB']['time_static'][self.sequence['RGB']['count']])
+    async def run():
+        if self.sequence['RGB'].get('len') > 0:
+            if (time.ticks_ms() - self.sequence['RGB']['time_current']) >= self.sequence['RGB']['time_slice']:
+                before = self.sequence['RGB']['count']
+                self.sequence['RGB']['time_current'] = time.ticks_ms()
+                if self.sequence['RGB']['quant']['flag'] == 0:
+                    if self.sequence['RGB']['mode'] == 'C':
+                        self.sequence['RGB']['count'] = (before + 1) % self.sequence['RGB']['len']
+                    elif self.sequence['RGB']['mode'] == 'S':
+                        self.sequence['RGB']['count'] += 1
+                        if self.sequence['RGB']['count'] >= self.sequence['RGB']['len']:
+                            self.sequence['RGB']['len'] = 0
                             continue
-            if self.sequence['STR'].get('len') > 0:
-                self.exec_discr('STR')
-            if self.sequence['LGT'].get('len') > 0:
-                self.exec_discr('LGT')
-            await asyncio.sleep_ms(10)
+                    try:
+                        tc = int(self.sequence['RGB'].get('time_change')[before])
+                        if tc > 0:
+                            self.sequence['RGB']['time_slice'] = int(tc/self.sequence['RGB']['quant']['num'])
+                            self.manage_pwm_delta(before)
+                        else:
+                            self.sequence['RGB']['time_slice'] = time_phase(self.sequence['RGB']['time_static'][self.sequence['RGB']['count']])
+                            self.manage_pwm(self.sequence['RGB']['count'])
+                    except IndexError:
+                        print('index error in RGB conf')
+                elif self.sequence['RGB']['quant']['flag'] == 1:
+                    self.manage_pwm_delta(before)
+                    if self.sequence['RGB']['quant']['count'] >= self.sequence['RGB']['quant']['num']:
+                        self.sequence['RGB']['quant']['count'] = 0
+                        self.sequence['RGB']['quant']['flag'] = 0
+                        self.sequence['RGB']['time_slice'] = time_phase(self.sequence['RGB']['time_static'][self.sequence['RGB']['count']])
+                        continue
+        if self.sequence['STR'].get('len') > 0:
+            self.exec_discr('STR')
+        if self.sequence['LGT'].get('len') > 0:
+            self.exec_discr('LGT')
+        await asyncio.sleep_ms(10)
 
     def handle(self, new_command, *args, **kwargs):
         for cmd, val in self.sequence.items():

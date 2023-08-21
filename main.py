@@ -3,14 +3,15 @@
 import ujson
 import network
 import uasyncio as asyncio
+import utils
 
-import umqttsimple
+from lib import umqttsimple
+from utime import ticks_diff, ticks_ms
 
 from config import netcfg
 from device import device_instance
-from utils import wifi_init, send_pong, heartbeat
 
-STATION = network.WLAN(network.STA_IF)
+loop = asyncio.get_event_loop()
 current_task = None
 
 
@@ -27,78 +28,47 @@ def mqtt_callback(topic, msg):
     if current_task is not None:
         current_task.cancel()
 
-    async def _handler():
+    async def msg_handler(message):
         try:
-            cmd = ujson.loads(msg)
+            cmd = ujson.loads(message)
             datahold = cmd.get('datahold')
             device_instance.handle(datahold)
         except Exception:  # noqa
-            asyncio.sleep_ms(200)
+            await asyncio.sleep_ms(200)
 
-    current_task = asyncio.create_task(_handler)
+    current_task = asyncio.create_task(msg_handler(msg))
 
 
-def connect_and_subscribe(station):
-    _ip = str(station.ifconfig()[0]).split('.')
-    broker_ip = '.'.join(_ip[:3] + ['254'])
-    cfg = netcfg.mqtt
-
-    client = umqttsimple.MQTTClient(netcfg.mqtt.get('client_id'),
-                                    broker_ip,
-                                    port=cfg['port'],
-                                    user=cfg['user'],
-                                    password=cfg['password'],
-                                    keepalive=cfg['keepalive'])
-
-    client.set_callback(mqtt_callback)
-
-    try:
-        client.connect()
-    except Exception:  # noqa
-        netcfg.mqtt_conn = False
-        return client
-
-    subscribe_to = netcfg.sub_topics
-    for topic in subscribe_to:
-        client.subscribe(topic)
-    print(f'connected to {broker_ip}, subscribed to {subscribe_to}')
-
-    try:
-        cmd_out = '{"timestamp":1}'
-        client.publish(netcfg.topics['pub'], cmd_out)
-        netcfg.mqtt_conn = True
-    except Exception:  # noqa
-        netcfg.mqtt_conn = False
+async def routine():
     device_instance.reset()
-    return client
-
-
-async def connect_and_listen(station, client):
+    station = network.WLAN(network.STA_IF)
     while True:
-        if not netcfg.mqtt_conn:
-            client = connect_and_subscribe(station)
-            asyncio.sleep(100)
-            continue
+        if not station.isconnected():
+            await utils.wifi_init()
+        if not netcfg.client or not netcfg.mqtt_conn:
+            await utils.mqtt_init(mqtt_callback)
 
-        try:
-            client.check_msg()
-            asyncio.sleep_ms(100)
-        except OSError:  # noqa
+        last_ping = netcfg.client.last_ping or 0
+        if ticks_diff(ticks_ms(), last_ping) > netcfg.keepalive * 1000:
             netcfg.mqtt_conn = False
-            continue
 
-        if netcfg.ping_msg != b'':
-            send_pong(netcfg.ping_msg, client)
-            netcfg.ping_msg = b''
-
+        if netcfg.mqtt_conn:
+            try:
+                netcfg.client.check_msg()
+                await utils.send_pong()
+                await device_instance.run()
+                await asyncio.sleep_ms(100)
+            except OSError:  # noqa
+                netcfg.mqtt_conn = False
+                continue
+        
 
 async def main():
+    await utils.wifi_init()
+    await utils.mqtt_init(mqtt_callback)
     device_instance.reset()
-    await wifi_init(STATION)
-    client = connect_and_subscribe(STATION)
-    asyncio.create_task(heartbeat(STATION, client))
-    asyncio.create_task(connect_and_listen(STATION, client))
+    asyncio.create_task(routine())
 
 
-loop = asyncio.get_event_loop()
-loop.run_until_complete(main())
+loop.create_task(main())
+loop.run_forever()
